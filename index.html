@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en-us">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <title>Unity WebGL Player | MatrixBrute Noir</title>
+    <link rel="shortcut icon" href="TemplateData/favicon.ico">
+    <link rel="stylesheet" href="TemplateData/style.css">
+    <script src="./Build/Output.loader.js"></script>
+    <script>
+var instance = null;
+var midi = null;
+var stack = null;
+
+var Stack = function()
+{
+    this.data = [];
+    this.push = function(indata)
+    {
+        var newdata = new Array(this.data.length + indata.length);
+        for (var i = 0; i < this.data.length; ++i) { newdata[i] = this.data[i]; }
+        for (var i = 0; i < indata.length; ++i) { newdata[i + this.data.length] = indata[i]; }
+        this.data = newdata;
+    }
+    this.pop = function(n)
+    {
+        if (n > this.data.length) { n = this.data.length; }
+        var newdata = new Array(this.data.length - n);
+        for (var i = 0; i < (this.data.length - n); ++i) { newdata[i] = this.data[i]; }
+        var olddata = new Array(n);
+        for (var i = (this.data.length - n); i < this.data.length; ++i) { olddata[i] = this.data[i]; }
+        this.data = newdata;
+        return olddata;
+    }
+}
+
+window.onload = function()
+{
+    var container = document.querySelector("#unity-container");
+    var canvas = document.querySelector("#unity-canvas");
+    var loadingBar = document.querySelector("#unity-loading-bar");
+    var progressBarFull = document.querySelector("#unity-progress-bar-full");
+
+    var buildUrl = "Build";
+    var loaderUrl = buildUrl + "/Output.loader.js";
+    var config =
+    {
+        dataUrl: buildUrl + "/Output.data.unityweb",
+        frameworkUrl: buildUrl + "/Output.framework.js.unityweb",
+        codeUrl: buildUrl + "/Output.wasm.unityweb",
+        streamingAssetsUrl: "StreamingAssets",
+        companyName: "TheMindVirus",
+        productName: "MatrixBruteNoir",
+        productVersion: "0.1",
+    };
+
+    canvas.style.width = "100vw";
+    canvas.style.height = "100vh";
+    canvas.ondragstart = function(event) { event.preventDefault(); }
+
+    loadingBar.style.display = "block";
+    stack = new Stack();
+    stack.push([1,2,3,4,5]);
+    console.log(stack.data);
+    stack.push([6,7,8,9,10]);
+    console.log(stack.data);
+    stack.pop(1);
+    console.log(stack.data);
+    stack.pop(5);
+    console.log(stack.data);
+    stack.pop(5);
+    console.log(stack.data);
+    stack.push([[1,2,3,4]]);
+    console.log(stack.data);
+    stack.pop(1);
+    console.log(stack.data);
+
+    createUnityInstance(canvas, config, (progress) =>
+    {
+        progressBarFull.style.width = 100 * progress + "%";
+    }).then((unityInstance) =>
+    {
+        instance = unityInstance;
+        loadingBar.style.display = "none";
+        //setInterval(() => { Update(); }, 10);
+        //setTimeout(() => { SendMessageTest(); }, 10000);
+        SendMessage(2, 0xBA, 0, 127);
+        setTimeout(() => { SendMessage(2, 0xBA, 0, 1); }, 10000);
+    }).catch((message) => { alert(message); });
+
+    if (navigator.requestMIDIAccess) { navigator.requestMIDIAccess({sysex: true}).then(MIDIsetup, MIDIerror); }
+    else { console.log("[MIDI]: Error Initialising WebMIDI"); }
+};
+
+var MIDIsetup = function(handle)
+{
+    if (midi != null)
+    {
+        var inputs = midi.inputs.values();
+        for (var input = inputs.next(); input && (!input.done); input = inputs.next())
+        {
+            input.value.onmidimessage = null;
+        }
+    }
+    midi = handle;
+    midi.onstatechange = MIDIstate;
+    var inputs = midi.inputs.values();
+    for (var input = inputs.next(); input && (!input.done); input = inputs.next())
+    {
+        input.value.onmidimessage = MIDIevent;
+    }
+}
+
+var MIDIstate = function(state) { console.log("[MIDI]: " + state.port.name + " " + state.port.state); }
+var MIDIerror = function(error) { console.log("[MIDI]: " + error); }
+var MIDIevent = function(event)
+{
+    console.log("[MIDI]: " + event.data);
+    SendMessage(2, event.data[0], event.data[1], event.data[2]);
+}
+
+var MIDI2ACK = function(id, msg, x, y)
+{
+    return (parseInt(y) << 24) + (parseInt(x) << 16) + (parseInt(msg) << 8) + parseInt(id);
+}
+
+var HEXFMT = function(value)
+{
+    return ((value < 0x10) ? "0" : "") + value.toString(16).toUpperCase();
+}
+
+var ReceiveMessage = function(id, msg, x, y)
+{
+    console.log("[" + HEXFMT(id) + ", " + HEXFMT(msg) + ", " + HEXFMT(x) + ", " + HEXFMT(y) + "]");
+    var outputs = midi.outputs.values();
+    for (var output = outputs.next(); output && (!output.done); output = outputs.next()) { output.value.send([msg, x, y]); }
+    instance.SendMessage("MatrixBruteNoir", "Acknowledge", MIDI2ACK(id, msg, x, y));
+}
+
+var SendMessage = function(id, msg, x, y)
+{
+    instance.SendMessage("MatrixBruteNoir", "MIDIEvent", MIDI2ACK(id, msg, x, y));
+}
+
+var Update = function()
+{
+    if (stack.data.length > 0)
+    {
+        var cmd = stack.pop(1);
+        SendMessage(cmd[0], cmd[1], cmd[2], cmd[3]);
+    }
+}
+
+var SendMessageTest = function()
+{
+    //INVESTIGATE: Gets stuck for no apparent reason
+    for (var cc = 0; cc < 68; ++cc)
+    {
+        var ch = (cc / (128)); cc -= (128) * (cc / (128));
+        stack.push([[1, 0xB0 + ch, cc, 127]]);
+    }
+    for (var cc = 0; cc < 256; ++cc)
+    {
+        var ch = (cc / (128)); cc -= (128) * (cc / (128));
+        stack.push([[1, 0xBA + ch, cc, 127]]);
+    }
+    for (var cc = 0; cc < 68; ++cc)
+    {
+        var ch = (cc / (128)); cc -= (128) * (cc / (128));
+        stack.push([[1, 0xB0 + ch, cc, 0]]);
+    }
+    for (var cc = 0; cc < 256; ++cc)
+    {
+        var ch = (cc / (128)); cc -= (128) * (cc / (128));
+        stack.push([[1, 0xBA + ch, cc, 0]]);
+    }
+    console.log(stack.data);
+}
+    </script>
+    <style>
+      * { margin: auto; text-align: center; overflow: hidden; }
+      body { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; background-color: black; }
+      .webgl-content { position: absolute; top: 0 left: 0; width: 100%; height: 100%; text-shadow: 1px 1px 10px white; }
+      .unityContainer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+      .footer { position: absolute; top: 0; width: 100%; height: 30px; background-color: cyan; box-shadow: 1px 1px 10px black; opacity: 0.5; }
+      .webgl-logo { position: relative; top: 0; left: 0; background-color: white; z-index: 9999; }
+      .fullscreen { position: relative; top: 0; right: 0; }
+      .title { position: relative; bottom: 0; font-weight: bold; }
+      h1, h2 { color: white; font-family: sans-serif; }
+    </style>
+  </head>
+  <body>
+    <div id="unity-container" class="unity-desktop">
+      <canvas id="unity-canvas" width="100%" height="100%" onclick="requestPointerLock();"></canvas>
+      <div id="unity-loading-bar">
+        <div id="unity-logo"></div>
+        <div id="unity-progress-bar-empty">
+          <div id="unity-progress-bar-full"></div>
+        </div>
+        <br/>
+        <h1>WARNING: This demo loads very slowly</h1>
+        <h1>even on high-end graphics cards.</h1>
+        <br/>
+        <h2>Please wait...</h2>
+      </div>
+    </div>
+  </body>
+</html>
